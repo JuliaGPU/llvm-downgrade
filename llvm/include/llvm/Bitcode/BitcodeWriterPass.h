@@ -33,6 +33,11 @@ LLVM_ABI ModulePass *
 createBitcodeWriterPass(raw_ostream &Str,
                         bool ShouldPreserveUseListOrder = false);
 
+ModulePass *createBitcode50WriterPass(raw_ostream &Str,
+                                      bool ShouldPreserveUseListOrder = false,
+                                      bool EmitSummaryIndex = false,
+                                      bool EmitModuleHash = false);
+
 /// Check whether a pass is a BitcodeWriterPass.
 LLVM_ABI bool isBitcodeWriterPass(Pass *P);
 
@@ -66,6 +71,32 @@ public:
   LLVM_ABI PreservedAnalyses run(Module &M, ModuleAnalysisManager &);
 
   static bool isRequired() { return true; }
+};
+
+class BitcodeWriterPass50 : public PassInfoMixin<BitcodeWriterPass50> {
+  raw_ostream &OS;
+  bool ShouldPreserveUseListOrder;
+  bool EmitSummaryIndex;
+  bool EmitModuleHash;
+
+public:
+  /// Construct a bitcode writer pass around a particular output stream.
+  ///
+  /// If \c ShouldPreserveUseListOrder, encode use-list order so it can be
+  /// reproduced when deserialized.
+  ///
+  /// If \c EmitSummaryIndex, emit the summary index (currently
+  /// for use in ThinLTO optimization).
+  explicit BitcodeWriterPass50(raw_ostream &OS,
+                               bool ShouldPreserveUseListOrder = false,
+                               bool EmitSummaryIndex = false,
+                               bool EmitModuleHash = false)
+      : OS(OS), ShouldPreserveUseListOrder(ShouldPreserveUseListOrder),
+  EmitSummaryIndex(EmitSummaryIndex), EmitModuleHash(EmitModuleHash) {}
+
+  /// Run the bitcode writer pass, and output the module to the selected
+  /// output stream.
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &);
 };
 
 }
