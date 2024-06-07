@@ -174,6 +174,8 @@ public:
     void writeIndex(
         const ModuleSummaryIndex *Index,
         const std::map<std::string, GVSummaryMapTy> *ModuleToSummariesForIndex);
+
+    static bool prepareModule(Module &M);
   };
 
   class BitcodeWriter70 {
@@ -250,6 +252,8 @@ public:
     void writeIndex(
         const ModuleSummaryIndex *Index,
         const std::map<std::string, GVSummaryMapTy> *ModuleToSummariesForIndex);
+
+    static bool prepareModule(Module &M);
   };
 
 /// Write the specified module to the specified raw output stream.
