@@ -407,6 +407,10 @@ class IndexBitcodeWriter50 : public BitcodeWriterBase50 {
   /// Tracks the last value id recorded in the GUIDToValueMap.
   unsigned GlobalValueId = 0;
 
+  /// Tracks the assignment of module paths in the module path string table to
+  /// an id assigned for use in summary references to the module path.
+  DenseMap<StringRef, uint64_t> ModuleIdMap;
+
 public:
   /// Constructs a IndexBitcodeWriter50 object for the given combined index,
   /// writing to the provided \p Buffer. When writing a subset of the index
@@ -2372,10 +2376,9 @@ void ModuleBitcodeWriter50::writeConstants(unsigned FirstVal, unsigned LastVal,
     } else if (isa<ConstantAggregate>(C)) {
       // XXX: how do support, e.g., `@global = [1 x ptr] [ptr @fun]`? we'd need
       //      bitcast CEs, e.g., `[i8* bitcast (void ()* @fun to i8*)]`...
-      if (!M.getContext().supportsTypedPointers())
-        if (LastTy->isPtrOrPtrVectorTy() ||
-            (LastTy->isArrayTy() && LastTy->getArrayElementType()->isPtrOrPtrVectorTy()))
-            llvm_unreachable("pointers in constant aggregates are not yet supported by the IR downgrader");
+      if (LastTy->isPtrOrPtrVectorTy() ||
+          (LastTy->isArrayTy() && LastTy->getArrayElementType()->isPtrOrPtrVectorTy()))
+          llvm_unreachable("pointers in constant aggregates are not yet supported by the IR downgrader");
 
       Code = bitc::CST_CODE_AGGREGATE;
       for (const Value *Op : C->operands())
@@ -2384,10 +2387,9 @@ void ModuleBitcodeWriter50::writeConstants(unsigned FirstVal, unsigned LastVal,
     } else if (const ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
       // we don't support constant expressions because we cannot rewrite them,
       // so instead we rely on them being demoted to instructions beforehand.
-      if (!M.getContext().supportsTypedPointers())
-        if (LastTy->isPtrOrPtrVectorTy() ||
-            (LastTy->isArrayTy() && LastTy->getArrayElementType()->isPtrOrPtrVectorTy()))
-            llvm_unreachable("pointers in constant expressions are not supported by the IR downgrader");
+      if (LastTy->isPtrOrPtrVectorTy() ||
+          (LastTy->isArrayTy() && LastTy->getArrayElementType()->isPtrOrPtrVectorTy()))
+          llvm_unreachable("pointers in constant expressions are not supported by the IR downgrader");
 
       switch (CE->getOpcode()) {
       default:
@@ -3381,33 +3383,33 @@ void IndexBitcodeWriter50::writeModStrings() {
   unsigned AbbrevHash = Stream.EmitAbbrev(std::move(Abbv));
 
   SmallVector<unsigned, 64> Vals;
-  forEachModule(
-      [&](const StringMapEntry<std::pair<uint64_t, ModuleHash>> &MPSE) {
-        StringRef Key = MPSE.getKey();
-        const auto &Value = MPSE.getValue();
-        StringEncoding Bits = getStringEncoding(Key);
-        unsigned AbbrevToUse = Abbrev8Bit;
-        if (Bits == SE_Char6)
-          AbbrevToUse = Abbrev6Bit;
-        else if (Bits == SE_Fixed7)
-          AbbrevToUse = Abbrev7Bit;
+  forEachModule([&](const StringMapEntry<ModuleHash> &MPSE) {
+    StringRef Key = MPSE.getKey();
+    const auto &Hash = MPSE.getValue();
+    StringEncoding Bits = getStringEncoding(Key);
+    unsigned AbbrevToUse = Abbrev8Bit;
+    if (Bits == SE_Char6)
+      AbbrevToUse = Abbrev6Bit;
+    else if (Bits == SE_Fixed7)
+      AbbrevToUse = Abbrev7Bit;
 
-        Vals.push_back(Value.first);
-        Vals.append(Key.begin(), Key.end());
+    auto ModuleId = ModuleIdMap.size();
+    ModuleIdMap[Key] = ModuleId;
+    Vals.push_back(ModuleId);
+    Vals.append(Key.begin(), Key.end());
 
-        // Emit the finished record.
-        Stream.EmitRecord(bitc::MST_CODE_ENTRY, Vals, AbbrevToUse);
+    // Emit the finished record.
+    Stream.EmitRecord(bitc::MST_CODE_ENTRY, Vals, AbbrevToUse);
 
-        // Emit an optional hash for the module now
-        const auto &Hash = Value.second;
-        if (llvm::any_of(Hash, [](uint32_t H) { return H; })) {
-          Vals.assign(Hash.begin(), Hash.end());
-          // Emit the hash record.
-          Stream.EmitRecord(bitc::MST_CODE_HASH, Vals, AbbrevHash);
-        }
+    // Emit an optional hash for the module now
+    if (llvm::any_of(Hash, [](uint32_t H) { return H; })) {
+      Vals.assign(Hash.begin(), Hash.end());
+      // Emit the hash record.
+      Stream.EmitRecord(bitc::MST_CODE_HASH, Vals, AbbrevHash);
+    }
 
-        Vals.clear();
-      });
+    Vals.clear();
+  });
   Stream.ExitBlock();
 }
 
@@ -3723,7 +3725,8 @@ void IndexBitcodeWriter50::writeCombinedGlobalValueSummary() {
 
     if (auto *VS = dyn_cast<GlobalVarSummary>(S)) {
       NameVals.push_back(*ValueId);
-      NameVals.push_back(Index.getModuleId(VS->modulePath()));
+      assert(ModuleIdMap.count(VS->modulePath()));
+      NameVals.push_back(ModuleIdMap[VS->modulePath()]);
       NameVals.push_back(getEncodedGVSummaryFlags(VS->flags()));
       for (auto &RI : VS->refs()) {
         auto RefValueId = getValueId(RI.getGUID());
@@ -3744,7 +3747,8 @@ void IndexBitcodeWriter50::writeCombinedGlobalValueSummary() {
     writeFunctionTypeMetadataRecords(Stream, FS);
 
     NameVals.push_back(*ValueId);
-    NameVals.push_back(Index.getModuleId(FS->modulePath()));
+    assert(ModuleIdMap.count(FS->modulePath()));
+    NameVals.push_back(ModuleIdMap[FS->modulePath()]);
     NameVals.push_back(getEncodedGVSummaryFlags(FS->flags()));
     NameVals.push_back(FS->instCount());
     // Fill in below
@@ -3802,7 +3806,8 @@ void IndexBitcodeWriter50::writeCombinedGlobalValueSummary() {
     auto AliasValueId = SummaryToValueIdMap[AS];
     assert(AliasValueId);
     NameVals.push_back(AliasValueId);
-    NameVals.push_back(Index.getModuleId(AS->modulePath()));
+    assert(ModuleIdMap.count(AS->modulePath()));
+    NameVals.push_back(ModuleIdMap[AS->modulePath()]);
     NameVals.push_back(getEncodedGVSummaryFlags(AS->flags()));
     auto AliaseeValueId = SummaryToValueIdMap[&AS->getAliasee()];
     assert(AliaseeValueId);
