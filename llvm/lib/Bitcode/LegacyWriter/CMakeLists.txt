@@ -16,8 +16,10 @@ add_llvm_component_library(LLVMLegacyBitWriter
 
   LINK_COMPONENTS
   Analysis
+  BitWriter
   Core
   MC
   Object
   Support
+  TargetParser
   )
