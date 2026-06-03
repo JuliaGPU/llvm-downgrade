@@ -338,6 +338,14 @@ bool bitcastInstructionOperands(Module &M) {
           Worklist.push_back(GEP);
         else if (auto *AI = dyn_cast<AllocaInst>(&I))
           Worklist.push_back(AI);
+        else if (auto *CI = dyn_cast<CallInst>(&I)) {
+          // An indirect (or otherwise non-Function) callee is enumerated with
+          // the opaque pointer type, which won't match the call's function
+          // type. Retype it with a bitcast, like old typed-pointer IR's
+          // `call ... bitcast(callee to FTy*)()` form.
+          if (!CI->getCalledFunction())
+            Worklist.push_back(CI);
+        }
       }
     }
   }
@@ -359,6 +367,8 @@ bool bitcastInstructionOperands(Module &M) {
       appendBitcast(M, GEP);
     } else if (auto *AI = dyn_cast<AllocaInst>(I)) {
       appendBitcast(M, AI);
+    } else if (auto *CI = dyn_cast<CallInst>(I)) {
+      prependBitcast(M, CI, CI->getCalledOperandUse().getOperandNo());
     } else
       llvm_unreachable("Unhandled instruction");
   }
@@ -436,6 +446,14 @@ PointerTypeMap PointerRewriter::buildPointerMap(const Module &M) {
           assert(AI->hasOneUse() && isNoopCast(AI->user_back()));
           PointerMap[AI] = TypedPointerType::get(AI->getAllocatedType(),
                                                  AI->getAddressSpace());
+        } else if (auto *CI = dyn_cast<CallInst>(&I)) {
+          if (!CI->getCalledFunction()) {
+            const Value *Callee = CI->getCalledOperand();
+            assert(isNoopCast(Callee));
+            PointerMap[Callee] = TypedPointerType::get(
+                CI->getFunctionType(),
+                Callee->getType()->getPointerAddressSpace());
+          }
         }
       }
     }
