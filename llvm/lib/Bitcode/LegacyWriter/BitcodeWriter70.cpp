@@ -1684,7 +1684,10 @@ void ModuleBitcodeWriter70::writeDICompileUnit(const DICompileUnit *N,
   Record.push_back(VE.getMetadataOrNullID(N->getMacros().get()));
   Record.push_back(N->getSplitDebugInlining());
   Record.push_back(N->getDebugInfoForProfiling());
-  Record.push_back((unsigned)N->getNameTableKind());
+  // LLVM 7's final DICompileUnit field is the gnuPubnames bool, not the (later)
+  // nameTableKind enum; gnuPubnames corresponds to the GNU name-table kind.
+  Record.push_back(N->getNameTableKind() ==
+                   DICompileUnit::DebugNameTableKind::GNU);
 
   Stream.EmitRecord(bitc::METADATA_COMPILE_UNIT, Record, Abbrev);
   Record.clear();
