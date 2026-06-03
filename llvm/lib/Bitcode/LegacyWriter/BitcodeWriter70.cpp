@@ -32,6 +32,7 @@
 #include "llvm/Bitstream/BitstreamWriter.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Attributes.h"
+#include "llvm/Support/ModRef.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Comdat.h"
 #include "llvm/IR/Constant.h"
@@ -631,8 +632,6 @@ uint64_t getAttrKindEncoding70(Attribute::AttrKind Kind) {
     return bitc::ATTR_KIND_NO_ALIAS;
   case Attribute::NoBuiltin:
     return bitc::ATTR_KIND_NO_BUILTIN;
-  case Attribute::NoCapture:
-    return bitc::ATTR_KIND_NO_CAPTURE;
   case Attribute::NoDuplicate:
     return bitc::ATTR_KIND_NO_DUPLICATE;
   case Attribute::NoImplicitFloat:
@@ -734,6 +733,16 @@ void ModuleBitcodeWriter70::writeAttributeGroupTable() {
 
     for (Attribute Attr : AS) {
       if (Attr.isEnumAttribute() || Attr.isIntAttribute()) {
+        // LLVM 21 replaced nocapture with the richer captures(...) attribute.
+        // LLVM 7.0 only has nocapture, equivalent to captures(none); drop any
+        // weaker capture information.
+        if (Attr.getKindAsEnum() == Attribute::Captures) {
+          if (Attr.getValueAsInt() == CaptureInfo::none().toIntValue()) {
+            Record.push_back(0);
+            Record.push_back(bitc::ATTR_KIND_NO_CAPTURE);
+          }
+          continue;
+        }
         // only encode attributes that are supported by LLVM 7.0
         const auto enc_attr = getAttrKindEncoding70(Attr.getKindAsEnum());
         if (enc_attr != llvm::bitc::ATTR_KIND_INVALID) {
@@ -1143,7 +1152,7 @@ static StringEncoding getStringEncoding(StringRef Str) {
 void ModuleBitcodeWriter70::writeModuleInfo() {
   // Emit various pieces of data attached to a module.
   if (!M.getTargetTriple().empty())
-    writeStringRecord(Stream, bitc::MODULE_CODE_TRIPLE, M.getTargetTriple(),
+    writeStringRecord(Stream, bitc::MODULE_CODE_TRIPLE, M.getTargetTriple().str(),
                       0 /*TODO*/);
   const std::string &DL = M.getDataLayoutStr();
   if (!DL.empty())
@@ -2321,12 +2330,12 @@ void ModuleBitcodeWriter70::writeConstants(unsigned FirstVal, unsigned LastVal,
                        unsigned(IA->getDialect()&1) << 2);
 
       // Add the asm string.
-      const std::string &AsmStr = IA->getAsmString();
+      StringRef AsmStr = IA->getAsmString();
       Record.push_back(AsmStr.size());
       Record.append(AsmStr.begin(), AsmStr.end());
 
       // Add the constraint string.
-      const std::string &ConstraintStr = IA->getConstraintString();
+      StringRef ConstraintStr = IA->getConstraintString();
       Record.push_back(ConstraintStr.size());
       Record.append(ConstraintStr.begin(), ConstraintStr.end());
       Stream.EmitRecord(bitc::CST_CODE_INLINEASM, Record);
@@ -3952,7 +3961,7 @@ void IndexBitcodeWriter70::writeCombinedGlobalValueSummary() {
   }
 
   if (!Index.cfiFunctionDefs().empty()) {
-    for (auto &S : Index.cfiFunctionDefs()) {
+    for (auto &S : Index.cfiFunctionDefs().symbols()) {
       NameVals.push_back(StrtabBuilder.add(S));
       NameVals.push_back(S.size());
     }
@@ -3961,7 +3970,7 @@ void IndexBitcodeWriter70::writeCombinedGlobalValueSummary() {
   }
 
   if (!Index.cfiFunctionDecls().empty()) {
-    for (auto &S : Index.cfiFunctionDecls()) {
+    for (auto &S : Index.cfiFunctionDecls().symbols()) {
       NameVals.push_back(StrtabBuilder.add(S));
       NameVals.push_back(S.size());
     }
