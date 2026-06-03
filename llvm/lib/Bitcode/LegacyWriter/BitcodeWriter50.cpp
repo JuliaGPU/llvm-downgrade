@@ -900,7 +900,10 @@ void ModuleBitcodeWriter50::writeTypeTable() {
         Code = bitc::TYPE_CODE_STRUCT_ANON;
         AbbrevToUse = StructAnonAbbrev;
       } else {
-        Code = bitc::TYPE_CODE_OPAQUE;
+        // A named struct with a body must use STRUCT_NAMED; OPAQUE is only for
+        // bodyless structs (LLVM 5/7 reject an OPAQUE record carrying a body).
+        Code = ST->isOpaque() ? bitc::TYPE_CODE_OPAQUE
+                              : bitc::TYPE_CODE_STRUCT_NAMED;
 
         // Emit the name if it is present.
         if (!ST->getName().empty())
