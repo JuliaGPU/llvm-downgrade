@@ -2916,7 +2916,9 @@ void ModuleBitcodeWriter70::writeInstruction(const Instruction &I,
     Vals.push_back(cast<AtomicCmpXchgInst>(I).isWeak());
     break;
   case Instruction::AtomicRMW:
-    Code = bitc::FUNC_CODE_INST_ATOMICRMW;
+    // LLVM 7 only has the old atomicrmw code (38) with an implicit value type;
+    // the modern FUNC_CODE_INST_ATOMICRMW (59) does not exist there.
+    Code = bitc::FUNC_CODE_INST_ATOMICRMW_OLD;
     pushValueAndType(I.getOperand(0), InstID, Vals); // ptrty + ptr
     pushValue(I.getOperand(1), InstID, Vals);        // val.
     Vals.push_back(
