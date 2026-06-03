@@ -32,6 +32,7 @@
 #include "llvm/Bitstream/BitstreamWriter.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Attributes.h"
+#include "llvm/Support/ModRef.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Comdat.h"
 #include "llvm/IR/Constant.h"
@@ -613,8 +614,6 @@ uint64_t getAttrKindEncoding50(Attribute::AttrKind Kind) {
     return bitc::ATTR_KIND_NO_ALIAS;
   case Attribute::NoBuiltin:
     return bitc::ATTR_KIND_NO_BUILTIN;
-  case Attribute::NoCapture:
-    return bitc::ATTR_KIND_NO_CAPTURE;
   case Attribute::NoDuplicate:
     return bitc::ATTR_KIND_NO_DUPLICATE;
   case Attribute::NoImplicitFloat:
@@ -710,6 +709,16 @@ void ModuleBitcodeWriter50::writeAttributeGroupTable() {
 
     for (Attribute Attr : AS) {
       if (Attr.isEnumAttribute() || Attr.isIntAttribute()) {
+        // LLVM 21 replaced nocapture with the richer captures(...) attribute.
+        // LLVM 5.0 only has nocapture, equivalent to captures(none); drop any
+        // weaker capture information.
+        if (Attr.getKindAsEnum() == Attribute::Captures) {
+          if (Attr.getValueAsInt() == CaptureInfo::none().toIntValue()) {
+            Record.push_back(0);
+            Record.push_back(bitc::ATTR_KIND_NO_CAPTURE);
+          }
+          continue;
+        }
         // only encode attributes that are supported by LLVM 5.0
         const auto enc_attr = getAttrKindEncoding50(Attr.getKindAsEnum());
         if (enc_attr != llvm::bitc::ATTR_KIND_INVALID) {
@@ -1114,7 +1123,7 @@ static StringEncoding getStringEncoding(StringRef Str) {
 void ModuleBitcodeWriter50::writeModuleInfo() {
   // Emit various pieces of data attached to a module.
   if (!M.getTargetTriple().empty())
-    writeStringRecord(Stream, bitc::MODULE_CODE_TRIPLE, M.getTargetTriple(),
+    writeStringRecord(Stream, bitc::MODULE_CODE_TRIPLE, M.getTargetTriple().str(),
                       0 /*TODO*/);
   const std::string &DL = M.getDataLayoutStr();
   if (!DL.empty())
@@ -2276,12 +2285,12 @@ void ModuleBitcodeWriter50::writeConstants(unsigned FirstVal, unsigned LastVal,
                        unsigned(IA->getDialect()&1) << 2);
 
       // Add the asm string.
-      const std::string &AsmStr = IA->getAsmString();
+      StringRef AsmStr = IA->getAsmString();
       Record.push_back(AsmStr.size());
       Record.append(AsmStr.begin(), AsmStr.end());
 
       // Add the constraint string.
-      const std::string &ConstraintStr = IA->getConstraintString();
+      StringRef ConstraintStr = IA->getConstraintString();
       Record.push_back(ConstraintStr.size());
       Record.append(ConstraintStr.begin(), ConstraintStr.end());
       Stream.EmitRecord(bitc::CST_CODE_INLINEASM_OLD2, Record);
@@ -3483,7 +3492,7 @@ void ModuleBitcodeWriter50::writePerModuleFunctionSummaryRecord(
 void ModuleBitcodeWriter50::writeModuleLevelReferences(
     const GlobalVariable &V, SmallVector<uint64_t, 64> &NameVals,
     unsigned FSModRefsAbbrev) {
-  auto VI = Index->getValueInfo(GlobalValue::getGUID(V.getName()));
+  auto VI = Index->getValueInfo(GlobalValue::getGUIDAssumingExternalLinkage(V.getName()));
   if (!VI || VI.getSummaryList().empty()) {
     // Only declarations should not have a summary (a declaration might however
     // have a summary if the def was in module level asm).
@@ -3587,7 +3596,7 @@ void ModuleBitcodeWriter50::writePerModuleGlobalValueSummary() {
     if (!F.hasName())
       llvm_unreachable("Unexpected anonymous function when writing summary");
 
-    ValueInfo VI = Index->getValueInfo(GlobalValue::getGUID(F.getName()));
+    ValueInfo VI = Index->getValueInfo(GlobalValue::getGUIDAssumingExternalLinkage(F.getName()));
     if (!VI || VI.getSummaryList().empty()) {
       // Only declarations should not have a summary (a declaration might
       // however have a summary if the def was in module level asm).
@@ -3809,7 +3818,7 @@ void IndexBitcodeWriter50::writeCombinedGlobalValueSummary() {
   }
 
   if (!Index.cfiFunctionDefs().empty()) {
-    for (auto &S : Index.cfiFunctionDefs()) {
+    for (auto &S : Index.cfiFunctionDefs().symbols()) {
       NameVals.push_back(StrtabBuilder.add(S));
       NameVals.push_back(S.size());
     }
@@ -3818,7 +3827,7 @@ void IndexBitcodeWriter50::writeCombinedGlobalValueSummary() {
   }
 
   if (!Index.cfiFunctionDecls().empty()) {
-    for (auto &S : Index.cfiFunctionDecls()) {
+    for (auto &S : Index.cfiFunctionDecls().symbols()) {
       NameVals.push_back(StrtabBuilder.add(S));
       NameVals.push_back(S.size());
     }
