@@ -228,7 +228,7 @@ public:
       return;
     for (const auto &GUIDSummaryLists : *Index)
       // Examine all summaries for this GUID.
-      for (auto &Summary : GUIDSummaryLists.second.SummaryList)
+      for (auto &Summary : GUIDSummaryLists.second.getSummaryList())
         if (auto FS = dyn_cast<FunctionSummary>(Summary.get()))
           // For each call in the function summary, see if the call
           // is to a GUID (which means it is for an indirect call,
@@ -445,7 +445,7 @@ public:
           Callback(Summary);
     } else {
       for (auto &Summaries : Index)
-        for (auto &Summary : Summaries.second.SummaryList)
+        for (auto &Summary : Summaries.second.getSummaryList())
           Callback({Summaries.first, Summary.get()});
     }
   }
@@ -1629,7 +1629,7 @@ void ModuleBitcodeWriter50::writeDICompileUnit(const DICompileUnit *N,
                                              unsigned Abbrev) {
   assert(N->isDistinct() && "Expected distinct compile units");
   Record.push_back(/* IsDistinct */ true);
-  Record.push_back(N->getSourceLanguage());
+  Record.push_back(N->getSourceLanguage().getName());
   Record.push_back(VE.getMetadataOrNullID(N->getFile()));
   Record.push_back(VE.getMetadataOrNullID(N->getRawProducer()));
   Record.push_back(N->isOptimized());
