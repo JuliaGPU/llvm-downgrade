@@ -111,6 +111,10 @@ static void WriteOutputFile(Module *M, const ModuleSummaryIndex *Index) {
         BitcodeWriter70::prepareModule(*M);
         WriteBitcode70ToFile(*M, Out->os(), /* ShouldPreserveUseListOrder */ true,
                              IndexToWrite, EmitModuleHash);
+      } else if (BitcodeVersion == "14.0") {
+        BitcodeWriter140::prepareModule(*M);
+        WriteBitcode140ToFile(*M, Out->os(), /* ShouldPreserveUseListOrder */ true,
+                              IndexToWrite, EmitModuleHash);
       } else
         report_fatal_error("Unsupported bitcode version");
     else
