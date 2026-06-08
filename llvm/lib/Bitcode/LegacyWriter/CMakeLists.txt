@@ -10,6 +10,9 @@ add_llvm_component_library(LLVMLegacyBitWriter
   BitcodeWriterPass70.cpp
   ValueEnumerator70.cpp
   ModuleRewriter70.cpp
+  BitcodeWriter140.cpp
+  ValueEnumerator140.cpp
+  ModuleRewriter140.cpp
 
   DEPENDS
   intrinsics_gen
